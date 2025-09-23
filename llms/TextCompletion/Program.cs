@@ -23,6 +23,7 @@ await ChatApp(client);
 
 
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task StructuredOutput(IChatClient client)
 {
 
@@ -67,8 +68,10 @@ static async Task StructuredOutput(IChatClient client)
         }
     }
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task BasicCompletion(IChatClient client)
 {
     string prompt = "Что такое ИИ? Объясни с юмором и максимум 20 словами";
@@ -80,7 +83,9 @@ static async Task BasicCompletion(IChatClient client)
 
     Console.WriteLine($"Токенов использовано: вход={response.Usage?.InputTokenCount}, выход={response.Usage?.OutputTokenCount}");
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task Streaming(IChatClient client)
 {
     string prompt = "Что такое ИИ? Объясни максимум 200 словами";
@@ -92,7 +97,9 @@ static async Task Streaming(IChatClient client)
         Console.Write(message.Text);
     }
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task Classification(IChatClient client)
 {
     var classificationPrompt = """
@@ -114,7 +121,9 @@ static async Task Classification(IChatClient client)
 
     Console.WriteLine($"assistant >>>\n{classificationResponse}");
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task Summarization(IChatClient client)
 {
     var summaryPrompt = """
@@ -129,7 +138,9 @@ static async Task Summarization(IChatClient client)
 
     Console.WriteLine($"assistant >>> \n{summaryResponse}");
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
+#pragma warning disable CS8321 // Local function is declared but never used
 static async Task SentimentAnalysis(IChatClient client)
 {
     var analysisPrompt = """
@@ -148,6 +159,7 @@ static async Task SentimentAnalysis(IChatClient client)
 
     Console.WriteLine($"assistant >>> \n{responseAnalysis}");
 }
+#pragma warning restore CS8321 // Local function is declared but never used
 
 static async Task ChatApp(IChatClient client)
 {

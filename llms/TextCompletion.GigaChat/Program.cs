@@ -1,113 +1,47 @@
-﻿using System.Text.Json.Serialization;
+﻿#pragma warning disable CS8321 // Local function is declared but never used
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.AI;
-using OllamaSharp;
+using Microsoft.Extensions.Configuration;
+using TextCompletion.GigaChat;
 
-// create a chat client
-IChatClient client =
-    new OllamaApiClient(new Uri("http://localhost:11434"), "llama3.2");
+// Load configuration to get GigaChat token from user secrets
+var configuration = new ConfigurationBuilder()
+    .AddUserSecrets<Program>()
+    .Build();
 
-// // user prompts
-// var promptDescribe = "Describe the image";
-// var promptAnalyze = "How many red cars are in the picture? and what other car colors are there?";
+var token = configuration["GigaChat:Token"];
+if (string.IsNullOrEmpty(token))
+{
+    Console.WriteLine("GigaChat:Token не найден в user secrets. Добавьте токен с помощью:");
+    Console.WriteLine("dotnet user-secrets set \"GigaChat:Token\" \"ваш_токен\"");
+    return;
+}
 
-// // prompts
-// string systemPrompt = "You are a useful assistant that describes images using a direct style.";
-// var userPrompt = promptAnalyze;
-
-// List<ChatMessage> messages =
-// [
-//     new ChatMessage(ChatRole.System, systemPrompt),
-//     new ChatMessage(ChatRole.User, userPrompt),
-// ];
-
-// // read the image bytes, create a new image content part and add it to the messages
-// var imageFileName = "cars.png";
-// string image = Path.Combine(Directory.GetCurrentDirectory(), "images", imageFileName);
-
-// AIContent aic = new DataContent(File.ReadAllBytes(image), "image/png");
-// var message = new ChatMessage(ChatRole.User, [aic]);
-// messages.Add(message);
-
-// // send the messages to the assistant
-// var response = await client.GetResponseAsync(messages);
-// Console.WriteLine($"Prompt: {userPrompt}");
-// Console.WriteLine($"Image: {imageFileName}");
-// Console.WriteLine($"Response: {response.Messages[0]}");
-
-
-
+// Create GigaChat client
+IChatClient client = new GigaChatClient(token);
 
 // await BasicCompletion(client);
 // await Streaming(client);
 // await Classification(client);
 // await Summarization(client);
 // await SentimentAnalysis(client);
-// await StructuredOutput(client);
-await ChatApp(client);
+await StructuredOutput(client);
+// await ChatApp(client);
 
-
-
- 
-static async Task StructuredOutput(IChatClient client)
-{
-
-
-
-    var carListings = new[]
-    {
-   "Check out this stylish 2019 Toyota Camry. It has a clean title, only 40,000 miles on the odometer, and a well-maintained interior. The car offers great fuel efficiency, a spacious trunk, and modern safety features like lane departure alert. Minimum offer price: $18,000. Contact Metro Auto at (555) 111-2222 to schedule a test drive.",
-   "Lease this sporty 2021 Honda Civic! With only 10,000 miles, it includes a sunroof, premium sound system, and backup camera. Perfect for city driving with its compact size and great fuel mileage. Located in Uptown Motors, monthly lease starts at $250 (excl. taxes). Call (555) 333-4444 for more info.",
-   "A classic 1968 Ford Mustang, perfect for enthusiasts. The vehicle needs some interior restoration, but the engine runs smoothly. V8 engine, manual transmission, around 80,000 miles. This vintage gem is priced at $25,000. Contact Retro Wheels at (555) 777-8888 if you’re interested.",
-   "Brand new 2023 Tesla Model 3 for lease. Zero miles, fully electric, autopilot capabilities, and a sleek design. Monthly lease starts at $450. Clean lines, minimalist interior, top-notch performance. For more details, call EVolution Cars at (555) 999-0000.",
-   "Selling a 2015 Subaru Outback in good condition. 60,000 miles on it, includes all-wheel drive, heated seats, and ample cargo space for family getaways. Minimum offer price: $14,000. Contact Forrest Autos at (555) 222-1212 if you want a reliable adventure companion.",
-};
-
-    foreach (var listingText in carListings)
-    {
-        var response = await client.GetResponseAsync<CarDetails>(
-            $"""
-       Преобразуй следующее объявление о продаже автомобиля в JSON объект, соответствующий этой C# схеме:
-       Condition: "New" или "Used" (Новый или Б/у)
-       Make: (производитель автомобиля)
-       Model: (модель автомобиля)
-       Year: (четырехзначный год)
-       ListingType: "Sale" или "Lease" (Продажа или Аренда)
-       Price: только целое число
-       Features: массив коротких строк
-       TenWordSummary: ровно десять слов для резюме этого объявления
-
-       Вот объявление:
-       {listingText}
-       """);
-
-        if (response.TryGetResult(out var info))
-        {
-            // Convert the CarDetails object to JSON for display
-            Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(
-                info, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-        }
-        else
-        {
-            Console.WriteLine("Ответ не в ожидаемом формате.");
-        }
-    }
-}
- 
-
- 
 static async Task BasicCompletion(IChatClient client)
 {
     string prompt = "Что такое ИИ? Объясни с юмором и максимум 20 словами";
-    System.Console.WriteLine($"user >>> {prompt}");
+    Console.WriteLine($"user >>> {prompt}");
 
     ChatResponse response = await client.GetResponseAsync(prompt);
 
-    System.Console.WriteLine($"assistant >>> {response}");
+    Console.WriteLine($"assistant >>> {response}");
 
     Console.WriteLine($"Токенов использовано: вход={response.Usage?.InputTokenCount}, выход={response.Usage?.OutputTokenCount}");
 }
- 
- 
+
 static async Task Streaming(IChatClient client)
 {
     string prompt = "Что такое ИИ? Объясни максимум 200 словами";
@@ -116,8 +50,11 @@ static async Task Streaming(IChatClient client)
     var responseStream = client.GetStreamingResponseAsync(prompt);
     await foreach (var message in responseStream)
     {
-        Console.Write(message.Text);
+        var gigaChatUpdate = message as TextCompletion.GigaChat.GigaChatStreamingUpdate;
+        var text = gigaChatUpdate?.GetText() ?? message.Text ?? "";
+        Console.Write(text);
     }
+    Console.WriteLine(); // Add newline at the end
 }
 
 static async Task Classification(IChatClient client)
@@ -176,6 +113,53 @@ static async Task SentimentAnalysis(IChatClient client)
     Console.WriteLine($"assistant >>> \n{responseAnalysis}");
 }
 
+static async Task StructuredOutput(IChatClient client)
+{
+    var carListings = new[]
+    {
+   "Check out this stylish 2019 Toyota Camry. It has a clean title, only 40,000 miles on the odometer, and a well-maintained interior. The car offers great fuel efficiency, a spacious trunk, and modern safety features like lane departure alert. Minimum offer price: $18,000. Contact Metro Auto at (555) 111-2222 to schedule a test drive.",
+   "Lease this sporty 2021 Honda Civic! With only 10,000 miles, it includes a sunroof, premium sound system, and backup camera. Perfect for city driving with its compact size and great fuel mileage. Located in Uptown Motors, monthly lease starts at $250 (excl. taxes). Call (555) 333-4444 for more info.",
+   "A classic 1968 Ford Mustang, perfect for enthusiasts. The vehicle needs some interior restoration, but the engine runs smoothly. V8 engine, manual transmission, around 80,000 miles. This vintage gem is priced at $25,000. Contact Retro Wheels at (555) 777-8888 if you're interested.",
+   "Brand new 2023 Tesla Model 3 for lease. Zero miles, fully electric, autopilot capabilities, and a sleek design. Monthly lease starts at $450. Clean lines, minimalist interior, top-notch performance. For more details, call EVolution Cars at (555) 999-0000.",
+   "Selling a 2015 Subaru Outback in good condition. 60,000 miles on it, includes all-wheel drive, heated seats, and ample cargo space for family getaways. Minimum offer price: $14,000. Contact Forrest Autos at (555) 222-1212 if you want a reliable adventure companion.",
+};
+
+    foreach (var listingText in carListings)
+    {
+        var response = await client.GetResponseAsync<CarDetails>(
+            $@"Ответь ТОЛЬКО чистым JSON объектом. Никаких символов ``` или слов. Только JSON начинающийся с {{ и заканчивающийся }}.
+
+Структура:
+{{""Condition"":""New или Used"",""Make"":""строка"",""Model"":""строка"",""Year"":число,""ListingType"":""Sale или Lease"",""Price"":число,""Features"":[""строка""],""TenWordSummary"":""10 слов""}}
+
+Объявление: {listingText}");
+
+        // Manual parsing as fallback
+        var rawText = response.Messages[0].Text ?? "";
+
+        try
+        {
+            // Clean the JSON manually
+            var cleanedJson = rawText.Trim()
+                .Replace("\"Price\":null", "\"Price\":0")
+                .Replace(":null", ":0")
+                .Replace("\\ ", " ")
+                .Replace("\\u00A0", " ");
+
+            var manualResult = JsonSerializer.Deserialize<CarDetails>(cleanedJson);
+            Console.WriteLine(JsonSerializer.Serialize(
+                manualResult, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Ручной парсинг не удался.");
+            Console.WriteLine($"Raw response: {rawText}");
+            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine("---");
+        }
+    }
+}
+
 static async Task ChatApp(IChatClient client)
 {
     List<ChatMessage> chatHistory = new()
@@ -197,28 +181,31 @@ static async Task ChatApp(IChatClient client)
 
     while (true)
     {
-        // Get user prompt and add to chat history
         Console.WriteLine("Ваш запрос:");
         var userPrompt = Console.ReadLine();
+        if (string.IsNullOrEmpty(userPrompt)) continue;
+
         chatHistory.Add(new ChatMessage(ChatRole.User, userPrompt));
 
-        // Stream the AI response and add to chat history
         Console.WriteLine("Ответ ИИ:");
         var response = "";
         await foreach (var item in
             client.GetStreamingResponseAsync(chatHistory))
         {
-            Console.Write(item.Text);
-            response += item.Text;
+            var gigaChatUpdate = item as TextCompletion.GigaChat.GigaChatStreamingUpdate;
+            var text = gigaChatUpdate?.GetText() ?? item.Text ?? "";
+            Console.Write(text);
+            response += text;
         }
         chatHistory.Add(new ChatMessage(ChatRole.Assistant, response));
         Console.WriteLine();
     }
 }
 
+
 class CarDetails
 {
-    public required string Condition { get; set; }  // e.g. "New" or "Used"
+    public required string Condition { get; set; }
     public required string Make { get; set; }
     public required string Model { get; set; }
     public int Year { get; set; }
