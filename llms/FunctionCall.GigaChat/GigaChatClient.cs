@@ -430,22 +430,18 @@ public class GigaChatClient : IChatClient
             {
                 var jsonDoc = JsonDocument.Parse(arguments);
 
-                // Check if we have a generic "input" parameter that needs to be mapped
-                if (jsonDoc.RootElement.TryGetProperty("input", out var inputElement) &&
-                    jsonDoc.RootElement.EnumerateObject().Count() == 1)
+                // Parse JSON arguments directly - just like OpenAI
+                foreach (var property in jsonDoc.RootElement.EnumerateObject())
                 {
-                    // We have a single "input" parameter - try to map it to the actual function parameters
-                    var inputValue = inputElement.GetString() ?? "";
-                    MapInputToActualParameters(functionArgs, function, inputValue);
+                    object? value = ConvertJsonValueToObject(property.Value);
+                    functionArgs[property.Name] = value;
                 }
-                else
+
+                // Only handle "input" parameter as fallback if no other parameters provided
+                if (functionArgs.Count == 1 && functionArgs.ContainsKey("input"))
                 {
-                    // Parse normally - convert JSON values to appropriate C# types
-                    foreach (var property in jsonDoc.RootElement.EnumerateObject())
-                    {
-                        object? value = ConvertJsonValueToObject(property.Value);
-                        functionArgs[property.Name] = value;
-                    }
+                    var inputValue = functionArgs["input"]?.ToString() ?? "";
+                    MapInputToActualParameters(functionArgs, function, inputValue);
                 }
 
                 // Add default values for missing parameters based on method signature
@@ -493,95 +489,20 @@ public class GigaChatClient : IChatClient
         }
 
         var parameters = methodInfo.GetParameters();
-
-        // Clear the "input" key if it exists since we're mapping to actual parameters
         functionArgs.Remove("input");
 
-        // For functions with multiple parameters, try to intelligently parse the input
-        if (parameters.Length > 1)
+        // Just map to the first parameter for single input - let the LLM handle the parsing properly
+        if (parameters.Length > 0)
         {
-            // Use simple heuristics based on common patterns
-            var words = inputValue.ToLower().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-            foreach (var param in parameters)
+            var firstParam = parameters[0];
+            if (firstParam.Name != null)
             {
-                if (param.Name == null) continue;
-
-                // Set default values first
-                if (param.HasDefaultValue)
-                {
-                    functionArgs[param.Name] = param.DefaultValue;
-                }
-                else
-                {
-                    // Provide reasonable defaults based on parameter name and type
-                    var defaultValue = GetReasonableDefault(param);
-                    functionArgs[param.Name] = defaultValue;
-                }
-            }
-
-            // Try to extract meaningful values from the input
-            foreach (var word in words)
-            {
-                if (decimal.TryParse(word, out var number))
-                {
-                    // Find first numeric parameter that doesn't have a value yet
-                    var numericParam = parameters.FirstOrDefault(p =>
-                        (p.ParameterType == typeof(decimal) || p.ParameterType == typeof(double) || p.ParameterType == typeof(int))
-                        && p.Name != null);
-                    if (numericParam?.Name != null)
-                    {
-                        var convertedValue = ConvertArgumentToType(word, numericParam.ParameterType);
-                        functionArgs[numericParam.Name] = convertedValue;
-                    }
-                }
+                functionArgs[firstParam.Name] = ConvertArgumentToType(inputValue, firstParam.ParameterType);
             }
         }
-        else if (parameters.Length == 1)
-        {
-            // Single parameter - just map directly
-            var param = parameters[0];
-            if (param.Name != null)
-            {
-                var convertedValue = ConvertArgumentToType(inputValue, param.ParameterType);
-                functionArgs[param.Name] = convertedValue;
-            }
-        }
-    }
 
-    private static object GetReasonableDefault(System.Reflection.ParameterInfo parameter)
-    {
-        if (parameter.ParameterType == typeof(string))
-        {
-            return parameter.Name?.ToLower() switch
-            {
-                var name when name.Contains("currency") || name.Contains("from") => "USD",
-                var name when name.Contains("to") || name.Contains("target") => "EUR",
-                var name when name.Contains("location") => "New York",
-                var name when name.Contains("query") => "search",
-                var name when name.Contains("difficulty") => "moderate",
-                var name when name.Contains("unit") => "celsius",
-                _ => ""
-            };
-        }
-        else if (parameter.ParameterType == typeof(decimal))
-        {
-            return 1.0m;
-        }
-        else if (parameter.ParameterType == typeof(double))
-        {
-            return 1.0;
-        }
-        else if (parameter.ParameterType == typeof(int))
-        {
-            return parameter.Name?.ToLower().Contains("max") == true ? 5 : 1;
-        }
-        else if (parameter.ParameterType == typeof(bool))
-        {
-            return false;
-        }
-
-        return Activator.CreateInstance(parameter.ParameterType) ?? "";
+        // Add default values for any remaining parameters
+        AddDefaultValuesFromMethodSignature(functionArgs, function);
     }
 
     private static void AddDefaultValuesFromMethodSignature(AIFunctionArguments functionArgs, AIFunction function)
@@ -589,7 +510,7 @@ public class GigaChatClient : IChatClient
         var methodInfo = GetFunctionMethod(function);
         if (methodInfo == null) return;
 
-        // Add default values for parameters that have defaults and are missing from arguments
+        // Only add default values for parameters that have explicit defaults in C#
         foreach (var param in methodInfo.GetParameters())
         {
             var paramName = param.Name;
