@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.0-preview.1.25458.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.0.9" />
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.0-rc.1.25451.107" />
   </ItemGroup>
 
 </Project>

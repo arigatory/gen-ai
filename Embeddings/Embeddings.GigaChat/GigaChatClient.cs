@@ -127,7 +127,7 @@ public class GigaChatClient : IEmbeddingGenerator<string, Embedding<float>>
 public class GigaChatEmbeddingRequest
 {
     [JsonPropertyName("model")]
-    public string Model { get; set; } = "Embeddings";
+    public string Model { get; set; } = "Embeddings"; // or EmbeddingsGigaR
 
     [JsonPropertyName("input")]
     public string[] Input { get; set; } = [];
