@@ -137,19 +137,22 @@ var chatOptions = new ChatOptions
         {
             Console.WriteLine($"*** FUNCTION CALLED: students_in_course with id {courseId} ***");
 
-            // Simulated exchange rates (in real implementation, you'd call a financial API)
+            // Simulated course data (in real implementation, you'd call a database or API)
             var courses = new Dictionary<int, List<string>>
             {
-                { 1,["Ivan", "Andrey"] },
-                { 2,["Masha", "Kate"] },
-                { 2,["Daniel", "Dima"] },
-
+                { 1, ["Ivan", "Andrey"] },
+                { 2, ["Masha", "Kate"] },
+                { 3, ["Daniel", "Dima"] }
             };
 
-            var key = courseId;
-            if (courses.TryGetValue(key, out var students))
+            if (courses.TryGetValue(courseId, out var students))
             {
-                var result = students;
+                var result = new
+                {
+                    courseId = courseId,
+                    students = students,
+                    count = students.Count
+                };
                 return System.Text.Json.JsonSerializer.Serialize(result);
             }
             else
@@ -157,7 +160,7 @@ var chatOptions = new ChatOptions
                 var result = new
                 {
                     error = $"We don't have any courses with id {courseId}",
-                    avaliableCoursesId = new[] { 1, 2, 3}
+                    availableCoursesId = new[] { 1, 2, 3 }
                 };
                 return System.Text.Json.JsonSerializer.Serialize(result);
             }
