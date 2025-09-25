@@ -5,15 +5,17 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UserSecretsId>eb0f0771-087f-4953-aa6d-7fa8ebab4bd3</UserSecretsId>
+    <UserSecretsId>fc284604-74bd-421a-a495-2363ef4bc91c</UserSecretsId>
   </PropertyGroup>
-  
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.AI" Version="9.9.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.0-preview.1.25458.4" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
     <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="9.0.9" />
-    <PackageReference Include="System.Numerics.Tensors" Version="10.0.0-rc.1.25451.107" />
+    <PackageReference Include="Microsoft.Extensions.VectorData.Abstractions" Version="9.7.0" />
+    <PackageReference Include="Microsoft.SemanticKernel.Connectors.InMemory" Version="1.65.0-preview" />
   </ItemGroup>
+
 
 </Project>
