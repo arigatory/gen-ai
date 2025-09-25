@@ -140,7 +140,7 @@ var chatOptions = new ChatOptions
             // Simulated course data (in real implementation, you'd call a database or API)
             var courses = new Dictionary<int, List<string>>
             {
-                { 1, ["Ivan", "Andrey"] },
+                { 1, ["Ivan", "Andrey", "Nikita"] },
                 { 2, ["Masha", "Kate"] },
                 { 3, ["Daniel", "Dima"] }
             };
@@ -178,10 +178,11 @@ List<ChatMessage> chatHistory = [new(ChatRole.System, """
 // Test exchange rate functionality with multiple currencies
 var queries = new[]
 {
-    "What's the current exchange rate from USD to EUR for 100 dollars?",
-    "How much is 50 euros in Japanese yen?",
-    "Convert 10000 Japanese yen to US dollars",
-    "Какие студенты обучаются на курсе с id = 2"
+    // "What's the current exchange rate from USD to EUR for 100 dollars?",
+    // "How much is 50 euros in Japanese yen?",
+    // "Convert 10000 Japanese yen to US dollars",
+    // "Какие студенты обучаются на курсе с id = 2. И сколько у них денег в евро, если мы знаем, что им дали по 100 долларов?",
+    "Сколько у меня останется денег, если сейчас 100 долларов и я должен дать каждому студенту из курса с ID = 1 по 10 японский иен? Проверь актуальный курс валют перед ответом. Назови также именя студентов на этом курсе.",
 };
 
 foreach (var query in queries)
