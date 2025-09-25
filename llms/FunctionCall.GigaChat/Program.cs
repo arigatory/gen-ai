@@ -82,24 +82,81 @@ var chatOptions = new ChatOptions
             return System.Text.Json.JsonSerializer.Serialize(result);
         },
         "search_restaurants",
-        "Search for restaurants based on query")
+        "Search for restaurants based on query"),
+
+        AIFunctionFactory.Create((string fromCurrency, string toCurrency, decimal amount = 1) =>
+        {
+            Console.WriteLine($"*** FUNCTION CALLED: get_exchange_rate from {fromCurrency} to {toCurrency} for amount {amount} ***");
+
+            // Simulated exchange rates (in real implementation, you'd call a financial API)
+            var exchangeRates = new Dictionary<(string, string), decimal>
+            {
+                { ("USD", "EUR"), 0.92m },
+                { ("USD", "JPY"), 149.50m },
+                { ("USD", "RUB"), 97.25m },
+                { ("EUR", "USD"), 1.09m },
+                { ("EUR", "JPY"), 163.20m },
+                { ("EUR", "RUB"), 106.15m },
+                { ("JPY", "USD"), 0.0067m },
+                { ("JPY", "EUR"), 0.0061m },
+                { ("JPY", "RUB"), 0.65m },
+                { ("RUB", "USD"), 0.0103m },
+                { ("RUB", "EUR"), 0.0094m },
+                { ("RUB", "JPY"), 1.54m }
+            };
+
+            var key = (fromCurrency.ToUpper(), toCurrency.ToUpper());
+            if (exchangeRates.TryGetValue(key, out var rate))
+            {
+                var convertedAmount = amount * rate;
+                var result = new
+                {
+                    fromCurrency = fromCurrency.ToUpper(),
+                    toCurrency = toCurrency.ToUpper(),
+                    originalAmount = amount,
+                    exchangeRate = rate,
+                    convertedAmount = Math.Round(convertedAmount, 2),
+                    timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC")
+                };
+                return System.Text.Json.JsonSerializer.Serialize(result);
+            }
+            else
+            {
+                var result = new
+                {
+                    error = $"Exchange rate not available for {fromCurrency} to {toCurrency}",
+                    availableCurrencies = new[] { "USD", "EUR", "JPY", "RUB" }
+                };
+                return System.Text.Json.JsonSerializer.Serialize(result);
+            }
+        },
+        "get_exchange_rate",
+        "Get exchange rate between two currencies and convert specified amount")
     ]
 };
 
 List<ChatMessage> chatHistory = [new(ChatRole.System, """
-    You are a hiking enthusiast who helps people discover fun hikes in their area.
-    You are upbeat and friendly.
+    You are a helpful assistant that can provide information about various topics including exchange rates, weather, hiking trails, and restaurants.
+    You are knowledgeable and friendly.
     """)];
 
-// Test function selection with different types of questions
-chatHistory.Add(new(ChatRole.User, """
-    Найди мне рестораны с итальянской кухней в центре Москвы
-    """));
+// Test exchange rate functionality with multiple currencies
+var queries = new[]
+{
+    "What's the current exchange rate from USD to EUR for 100 dollars?",
+    "How much is 50 euros in Japanese yen?",
+    "Convert 10000 Japanese yen to US dollars"
+};
 
-Console.WriteLine($"{chatHistory.Last().Role} >>> {chatHistory.Last().Text}");
+foreach (var query in queries)
+{
+    Console.WriteLine($"\n=== Testing query: {query} ===");
 
-ChatResponse response = await client.GetResponseAsync(chatHistory, chatOptions);
+    chatHistory.Add(new(ChatRole.User, query));
+    Console.WriteLine($"{chatHistory.Last().Role} >>> {chatHistory.Last().Text}");
 
-chatHistory.Add(new(ChatRole.Assistant, response.Text));
+    ChatResponse response = await client.GetResponseAsync(chatHistory, chatOptions);
+    chatHistory.Add(new(ChatRole.Assistant, response.Text));
 
-Console.WriteLine($"{chatHistory.Last().Role} >>> {chatHistory.Last().Text}");
+    Console.WriteLine($"{chatHistory.Last().Role} >>> {chatHistory.Last().Text}");
+}

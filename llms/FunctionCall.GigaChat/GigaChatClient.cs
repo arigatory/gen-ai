@@ -345,36 +345,12 @@ public class GigaChatClient : IChatClient
     {
         try
         {
-            // Try to access the underlying delegate through various possible field names
-            var fields = new[] { "_implementation", "_function", "_delegate", "_method" };
-
-            foreach (var fieldName in fields)
-            {
-                var field = typeof(AIFunction).GetField(fieldName,
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-                if (field?.GetValue(function) is Delegate del)
-                {
-                    return del.Method;
-                }
-            }
-
-            // Try properties as well
-            var properties = new[] { "Implementation", "Function", "Delegate", "Method" };
-            foreach (var propName in properties)
-            {
-                var prop = typeof(AIFunction).GetProperty(propName,
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-                if (prop?.GetValue(function) is Delegate del)
-                {
-                    return del.Method;
-                }
-            }
+            // Use the UnderlyingMethod property directly
+            return function.UnderlyingMethod;
         }
-        catch
+        catch (Exception ex)
         {
-            // Ignore reflection errors
+            Console.WriteLine($"*** DEBUG: Exception in GetFunctionMethod: {ex.Message} ***");
         }
 
         return null;
@@ -429,7 +405,7 @@ public class GigaChatClient : IChatClient
     }
 
 
-    private async Task<string> CallFunctionAsync(AIFunction tool, string arguments, CancellationToken cancellationToken = default)
+    private static async Task<string> CallFunctionAsync(AIFunction tool, string arguments, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -443,7 +419,7 @@ public class GigaChatClient : IChatClient
         }
     }
 
-    private AIFunctionArguments ParseFunctionArguments(string arguments, AIFunction function)
+    private static AIFunctionArguments ParseFunctionArguments(string arguments, AIFunction function)
     {
         var functionArgs = new AIFunctionArguments();
 
@@ -464,18 +440,10 @@ public class GigaChatClient : IChatClient
                 }
                 else
                 {
-                    // Parse normally
+                    // Parse normally - convert JSON values to appropriate C# types
                     foreach (var property in jsonDoc.RootElement.EnumerateObject())
                     {
-                        object? value = property.Value.ValueKind switch
-                        {
-                            JsonValueKind.String => property.Value.GetString(),
-                            JsonValueKind.Number => property.Value.GetDouble(),
-                            JsonValueKind.True => true,
-                            JsonValueKind.False => false,
-                            JsonValueKind.Null => null,
-                            _ => property.Value.ToString()
-                        };
+                        object? value = ConvertJsonValueToObject(property.Value);
                         functionArgs[property.Name] = value;
                     }
                 }
@@ -498,43 +466,122 @@ public class GigaChatClient : IChatClient
         return functionArgs;
     }
 
-    private void MapInputToActualParameters(AIFunctionArguments functionArgs, AIFunction function, string inputValue)
+    private static object? ConvertJsonValueToObject(JsonElement jsonElement)
     {
-        // Try to map the generic "input" to actual function parameters based on function name
-        switch (function.Name)
+        return jsonElement.ValueKind switch
         {
-            case "get_current_weather":
-                functionArgs["location"] = inputValue;
-                functionArgs["unit"] = "celsius"; // default value
-                break;
+            JsonValueKind.String => jsonElement.GetString(),
+            JsonValueKind.Number when jsonElement.TryGetInt32(out var intValue) => intValue,
+            JsonValueKind.Number when jsonElement.TryGetDecimal(out var decimalValue) => decimalValue,
+            JsonValueKind.Number => jsonElement.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            JsonValueKind.Array => jsonElement.EnumerateArray().Select(ConvertJsonValueToObject).ToArray(),
+            JsonValueKind.Object => jsonElement.EnumerateObject().ToDictionary(p => p.Name, p => ConvertJsonValueToObject(p.Value)),
+            _ => jsonElement.ToString()
+        };
+    }
 
-            case "find_hiking_trails":
-                functionArgs["location"] = inputValue;
-                functionArgs["difficulty"] = "moderate"; // default value
-                break;
+    private static void MapInputToActualParameters(AIFunctionArguments functionArgs, AIFunction function, string inputValue)
+    {
+        var methodInfo = GetFunctionMethod(function);
+        if (methodInfo == null)
+        {
+            functionArgs["input"] = inputValue;
+            return;
+        }
 
-            case "search_restaurants":
-                functionArgs["query"] = inputValue;
-                functionArgs["maxResults"] = 5; // default value
-                break;
+        var parameters = methodInfo.GetParameters();
 
-            default:
-                // For unknown functions, use the first parameter or "input"
-                var methodInfo = GetFunctionMethod(function);
-                if (methodInfo != null && methodInfo.GetParameters().Length > 0)
+        // Clear the "input" key if it exists since we're mapping to actual parameters
+        functionArgs.Remove("input");
+
+        // For functions with multiple parameters, try to intelligently parse the input
+        if (parameters.Length > 1)
+        {
+            // Use simple heuristics based on common patterns
+            var words = inputValue.ToLower().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var param in parameters)
+            {
+                if (param.Name == null) continue;
+
+                // Set default values first
+                if (param.HasDefaultValue)
                 {
-                    var firstParam = methodInfo.GetParameters()[0];
-                    if (firstParam.Name != null)
-                    {
-                        functionArgs[firstParam.Name] = inputValue;
-                    }
+                    functionArgs[param.Name] = param.DefaultValue;
                 }
                 else
                 {
-                    functionArgs["input"] = inputValue;
+                    // Provide reasonable defaults based on parameter name and type
+                    var defaultValue = GetReasonableDefault(param);
+                    functionArgs[param.Name] = defaultValue;
                 }
-                break;
+            }
+
+            // Try to extract meaningful values from the input
+            foreach (var word in words)
+            {
+                if (decimal.TryParse(word, out var number))
+                {
+                    // Find first numeric parameter that doesn't have a value yet
+                    var numericParam = parameters.FirstOrDefault(p =>
+                        (p.ParameterType == typeof(decimal) || p.ParameterType == typeof(double) || p.ParameterType == typeof(int))
+                        && p.Name != null);
+                    if (numericParam?.Name != null)
+                    {
+                        var convertedValue = ConvertArgumentToType(word, numericParam.ParameterType);
+                        functionArgs[numericParam.Name] = convertedValue;
+                    }
+                }
+            }
         }
+        else if (parameters.Length == 1)
+        {
+            // Single parameter - just map directly
+            var param = parameters[0];
+            if (param.Name != null)
+            {
+                var convertedValue = ConvertArgumentToType(inputValue, param.ParameterType);
+                functionArgs[param.Name] = convertedValue;
+            }
+        }
+    }
+
+    private static object GetReasonableDefault(System.Reflection.ParameterInfo parameter)
+    {
+        if (parameter.ParameterType == typeof(string))
+        {
+            return parameter.Name?.ToLower() switch
+            {
+                var name when name.Contains("currency") || name.Contains("from") => "USD",
+                var name when name.Contains("to") || name.Contains("target") => "EUR",
+                var name when name.Contains("location") => "New York",
+                var name when name.Contains("query") => "search",
+                var name when name.Contains("difficulty") => "moderate",
+                var name when name.Contains("unit") => "celsius",
+                _ => ""
+            };
+        }
+        else if (parameter.ParameterType == typeof(decimal))
+        {
+            return 1.0m;
+        }
+        else if (parameter.ParameterType == typeof(double))
+        {
+            return 1.0;
+        }
+        else if (parameter.ParameterType == typeof(int))
+        {
+            return parameter.Name?.ToLower().Contains("max") == true ? 5 : 1;
+        }
+        else if (parameter.ParameterType == typeof(bool))
+        {
+            return false;
+        }
+
+        return Activator.CreateInstance(parameter.ParameterType) ?? "";
     }
 
     private static void AddDefaultValuesFromMethodSignature(AIFunctionArguments functionArgs, AIFunction function)
