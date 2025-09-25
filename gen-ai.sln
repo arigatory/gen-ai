@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FunctionCall", "llms\Functi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FunctionCall.Ollama", "llms\FunctionCall.Ollama\FunctionCall.Ollama.csproj", "{A10D6407-659C-4865-B08F-1E871B7F1CC1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FunctionCall.GigaChat", "llms\FunctionCall.GigaChat\FunctionCall.GigaChat.csproj", "{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -85,6 +87,18 @@ Global
 		{A10D6407-659C-4865-B08F-1E871B7F1CC1}.Release|x64.Build.0 = Release|Any CPU
 		{A10D6407-659C-4865-B08F-1E871B7F1CC1}.Release|x86.ActiveCfg = Release|Any CPU
 		{A10D6407-659C-4865-B08F-1E871B7F1CC1}.Release|x86.Build.0 = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|x64.Build.0 = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Debug|x86.Build.0 = Debug|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|x64.ActiveCfg = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|x64.Build.0 = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|x86.ActiveCfg = Release|Any CPU
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -95,5 +109,6 @@ Global
 		{E1F2A3B4-C5D6-E7F8-9A0B-1C2D3E4F5A6B} = {165A751F-EFC0-41ED-DABE-41C1AA8C0163}
 		{E721BEB5-7B32-4A68-B12F-D891464ECE94} = {165A751F-EFC0-41ED-DABE-41C1AA8C0163}
 		{A10D6407-659C-4865-B08F-1E871B7F1CC1} = {165A751F-EFC0-41ED-DABE-41C1AA8C0163}
+		{EC5EC934-3A78-4D88-86C9-E5BF27FD0268} = {165A751F-EFC0-41ED-DABE-41C1AA8C0163}
 	EndGlobalSection
 EndGlobal
