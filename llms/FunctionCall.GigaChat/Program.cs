@@ -131,7 +131,39 @@ var chatOptions = new ChatOptions
             }
         },
         "get_exchange_rate",
-        "Get exchange rate between two currencies and convert specified amount")
+        "Get exchange rate between two currencies and convert specified amount"),
+
+        AIFunctionFactory.Create((int courseId) =>
+        {
+            Console.WriteLine($"*** FUNCTION CALLED: students_in_course with id {courseId} ***");
+
+            // Simulated exchange rates (in real implementation, you'd call a financial API)
+            var courses = new Dictionary<int, List<string>>
+            {
+                { 1,["Ivan", "Andrey"] },
+                { 2,["Masha", "Kate"] },
+                { 2,["Daniel", "Dima"] },
+
+            };
+
+            var key = courseId;
+            if (courses.TryGetValue(key, out var students))
+            {
+                var result = students;
+                return System.Text.Json.JsonSerializer.Serialize(result);
+            }
+            else
+            {
+                var result = new
+                {
+                    error = $"We don't have any courses with id {courseId}",
+                    avaliableCoursesId = new[] { 1, 2, 3}
+                };
+                return System.Text.Json.JsonSerializer.Serialize(result);
+            }
+        },
+        "students_in_course",
+        "Get list of students in course by specified id of the course"),
     ]
 };
 
@@ -145,7 +177,8 @@ var queries = new[]
 {
     "What's the current exchange rate from USD to EUR for 100 dollars?",
     "How much is 50 euros in Japanese yen?",
-    "Convert 10000 Japanese yen to US dollars"
+    "Convert 10000 Japanese yen to US dollars",
+    "Какие студенты обучаются на курсе с id = 2"
 };
 
 foreach (var query in queries)
