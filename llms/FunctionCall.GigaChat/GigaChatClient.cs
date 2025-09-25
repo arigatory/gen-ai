@@ -99,41 +99,25 @@ public class GigaChatClient : IChatClient
     {
         var messages = chatMessages.ToList();
         var tools = options?.Tools?.ToList();
+        var functionCallCount = 0;
+        const int maxFunctionCalls = 5; // Prevent infinite loops
 
         while (true)
         {
+
             var request = new GigaChatRequest
             {
                 Model = "GigaChat",
-                Messages = [.. messages.Select(m => new GigaChatMessage
-                {
-                    Role = m.Role.Value,
-                    Content = m.Text ?? ""
-                })],
+                Messages = [.. messages.Select(m => ConvertToGigaChatMessage(m))],
                 Temperature = options?.Temperature ?? 0.7f,
                 MaxTokens = options?.MaxOutputTokens ?? 1024
             };
 
-            // Add function/tool information to the system message if tools are available
-            if (tools?.Any() == true)
+            // Add function/tool information if tools are available and we haven't exceeded the limit
+            if (tools?.Any() == true && functionCallCount < maxFunctionCalls)
             {
-                var systemMessage = request.Messages.FirstOrDefault(m => m.Role == "system");
-                var functionsInfo = string.Join("\n", tools.OfType<AIFunction>().Select(func =>
-                    $"Function: {func.Name ?? "unknown"}\nDescription: {func.Description ?? "No description"}"));
-
-                if (systemMessage != null)
-                {
-                    systemMessage.Content += $"\n\nYou have access to the following functions:\n{functionsInfo}\n\nWhen you need to call a function, respond with: CALL_FUNCTION:function_name:arguments";
-                }
-                else
-                {
-                    var functionSystemMessage = new GigaChatMessage
-                    {
-                        Role = "system",
-                        Content = $"You have access to the following functions:\n{functionsInfo}\n\nWhen you need to call a function, respond with: CALL_FUNCTION:function_name:arguments"
-                    };
-                    request.Messages = [functionSystemMessage, .. request.Messages];
-                }
+                request.Functions = GenerateOpenAIFunctions(tools);
+                request.FunctionCall = "auto";
             }
 
             _httpClient.DefaultRequestHeaders.Clear();
@@ -147,8 +131,6 @@ public class GigaChatClient : IChatClient
             if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                Console.WriteLine($"Request JSON: {json}");
-                Console.WriteLine($"Error {response.StatusCode}: {errorContent}");
                 throw new HttpRequestException($"Response status code does not indicate success: {response.StatusCode}. Details: {errorContent}");
             }
 
@@ -160,35 +142,54 @@ public class GigaChatClient : IChatClient
                 var choice = gigaChatResponse.Choices[0];
                 var responseContent = choice.Message.Content;
 
-                // Check if this is a function call
-                if (responseContent.StartsWith("CALL_FUNCTION:") && tools?.Any() == true)
+                // Check if this is a function call response and we haven't exceeded the limit
+                if (choice.Message.FunctionCall != null && tools?.Any() == true && functionCallCount < maxFunctionCalls)
                 {
-                    var parts = responseContent.Substring("CALL_FUNCTION:".Length).Split(':', 3);
-                    if (parts.Length >= 2)
+                    var functionCall = choice.Message.FunctionCall;
+                    var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name == functionCall.Name);
+
+                    if (tool != null)
                     {
-                        var functionName = parts[0];
-                        var arguments = parts.Length > 2 ? parts[2] : parts[1];
-
-                        var tool = tools.OfType<AIFunction>().FirstOrDefault(t => t.Name == functionName);
-                        if (tool != null)
+                        try
                         {
-                            try
-                            {
-                                // Parse arguments for the function call
-                                var functionResult = await CallFunctionAsync(tool, arguments, cancellationToken);
+                            // Parse arguments for the function call
+                            var argumentsString = functionCall.GetArgumentsAsString();
+                            var functionResult = await CallFunctionAsync(tool, argumentsString, cancellationToken);
 
-                                // Add the function call and result to the conversation
-                                messages.Add(new ChatMessage(ChatRole.Assistant, $"Calling function {functionName} with arguments: {arguments}"));
-                                messages.Add(new ChatMessage(ChatRole.User, $"Function result: {functionResult}"));
-
-                                // Continue the conversation loop to get the final response
-                                continue;
-                            }
-                            catch (Exception ex)
+                            // Add the function call message to conversation
+                            var assistantMessage = new ChatMessage(ChatRole.Assistant, "");
+                            if (assistantMessage.AdditionalProperties == null)
                             {
-                                messages.Add(new ChatMessage(ChatRole.User, $"Function error: {ex.Message}"));
-                                continue;
+                                assistantMessage.AdditionalProperties = new Microsoft.Extensions.AI.AdditionalPropertiesDictionary();
                             }
+
+                            assistantMessage.AdditionalProperties["function_call"] = new
+                            {
+                                name = functionCall.Name,
+                                arguments = argumentsString
+                            };
+                            messages.Add(assistantMessage);
+
+                            // Add the function result as a function message with role "function"
+                            var functionMessage = new ChatMessage(new ChatRole("function"), functionResult);
+                            if (functionMessage.AdditionalProperties == null)
+                            {
+                                functionMessage.AdditionalProperties = new Microsoft.Extensions.AI.AdditionalPropertiesDictionary();
+                            }
+
+                            functionMessage.AdditionalProperties["name"] = functionCall.Name;
+                            messages.Add(functionMessage);
+
+                            // Increment the function call counter
+                            functionCallCount++;
+
+                            // Continue the conversation loop to get the final response
+                            continue;
+                        }
+                        catch (Exception ex)
+                        {
+                            messages.Add(new ChatMessage(ChatRole.User, $"Function error: {ex.Message}"));
+                            continue;
                         }
                     }
                 }
@@ -204,36 +205,419 @@ public class GigaChatClient : IChatClient
                 };
             }
 
+
             throw new InvalidOperationException("Не удалось получить ответ от GigaChat");
         }
     }
+
+    private GigaChatFunction[] GenerateOpenAIFunctions(IEnumerable<AITool> tools)
+    {
+        var functions = new List<GigaChatFunction>();
+
+        foreach (var tool in tools.OfType<AIFunction>())
+        {
+            var function = new GigaChatFunction
+            {
+                Name = tool.Name,
+                Description = tool.Description ?? "No description provided",
+                Parameters = GenerateParametersSchema(tool)
+            };
+
+            functions.Add(function);
+        }
+
+        return functions.ToArray();
+    }
+
+    private GigaChatMessage ConvertToGigaChatMessage(ChatMessage message)
+    {
+        var gigaChatMessage = new GigaChatMessage
+        {
+            Role = message.Role.Value,
+            Content = message.Text ?? ""
+        };
+
+        // Handle function calls
+        if (message.AdditionalProperties?.ContainsKey("function_call") == true)
+        {
+            var functionCallData = message.AdditionalProperties["function_call"];
+            if (functionCallData != null)
+            {
+                var jsonElement = JsonSerializer.SerializeToElement(functionCallData);
+                var name = jsonElement.GetProperty("name").GetString() ?? "";
+                var argumentsText = jsonElement.GetProperty("arguments").GetString() ?? "";
+
+                gigaChatMessage.FunctionCall = new GigaChatFunctionCall
+                {
+                    Name = name,
+                    Arguments = JsonDocument.Parse(argumentsText).RootElement
+                };
+            }
+        }
+
+        // Handle function results (set name for function messages)
+        if (message.AdditionalProperties?.ContainsKey("name") == true)
+        {
+            gigaChatMessage.Name = message.AdditionalProperties["name"]?.ToString();
+        }
+
+        return gigaChatMessage;
+    }
+
+    private Dictionary<string, object> GenerateParametersSchema(AIFunction function)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["type"] = "object",
+            ["properties"] = new Dictionary<string, object>(),
+            ["required"] = new List<string>()
+        };
+
+        var properties = (Dictionary<string, object>)parameters["properties"];
+        var required = (List<string>)parameters["required"];
+
+        try
+        {
+            // Extract parameter information using reflection on the underlying method
+            var methodInfo = GetFunctionMethod(function);
+
+            if (methodInfo != null)
+            {
+                var paramInfos = methodInfo.GetParameters();
+
+                foreach (var param in paramInfos)
+                {
+                    var paramName = param.Name ?? "unknown";
+                    var paramType = GetJsonSchemaType(param.ParameterType);
+                    var isRequired = !param.HasDefaultValue && !IsNullable(param.ParameterType);
+
+                    var paramSchema = new Dictionary<string, object>
+                    {
+                        ["type"] = paramType
+                    };
+
+                    // Extract description from parameter attributes if available
+                    var description = GetParameterDescription(param);
+                    if (!string.IsNullOrEmpty(description))
+                    {
+                        paramSchema["description"] = description;
+                    }
+
+                    // Add enum values if parameter is an enum
+                    if (param.ParameterType.IsEnum)
+                    {
+                        paramSchema["enum"] = Enum.GetNames(param.ParameterType);
+                    }
+
+                    properties[paramName] = paramSchema;
+
+                    if (isRequired)
+                    {
+                        required.Add(paramName);
+                    }
+                }
+            }
+            else
+            {
+                // Fallback: create a single generic input parameter
+                properties["input"] = new Dictionary<string, object>
+                {
+                    ["type"] = "string",
+                    ["description"] = "Input for the function"
+                };
+                required.Add("input");
+            }
+        }
+        catch
+        {
+            // Final fallback: create a single generic input parameter
+            properties["input"] = new Dictionary<string, object>
+            {
+                ["type"] = "string",
+                ["description"] = "Input for the function"
+            };
+            required.Add("input");
+        }
+        return parameters;
+    }
+
+    private static System.Reflection.MethodInfo? GetFunctionMethod(AIFunction function)
+    {
+        try
+        {
+            // Try to access the underlying delegate through various possible field names
+            var fields = new[] { "_implementation", "_function", "_delegate", "_method" };
+
+            foreach (var fieldName in fields)
+            {
+                var field = typeof(AIFunction).GetField(fieldName,
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                if (field?.GetValue(function) is Delegate del)
+                {
+                    return del.Method;
+                }
+            }
+
+            // Try properties as well
+            var properties = new[] { "Implementation", "Function", "Delegate", "Method" };
+            foreach (var propName in properties)
+            {
+                var prop = typeof(AIFunction).GetProperty(propName,
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                if (prop?.GetValue(function) is Delegate del)
+                {
+                    return del.Method;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore reflection errors
+        }
+
+        return null;
+    }
+
+    private static string GetParameterDescription(System.Reflection.ParameterInfo parameter)
+    {
+        // Try to get description from various attributes
+        try
+        {
+            // Check for Description attribute
+            var descAttr = parameter.GetCustomAttributes(false)
+                .FirstOrDefault(attr => attr.GetType().Name.Contains("Description"));
+
+            if (descAttr != null)
+            {
+                var descProp = descAttr.GetType().GetProperty("Description");
+                if (descProp?.GetValue(descAttr) is string desc)
+                    return desc;
+            }
+
+            // Fallback: generate from parameter name and type
+            return $"Parameter {parameter.Name} of type {parameter.ParameterType.Name}";
+        }
+        catch
+        {
+            return $"Parameter {parameter.Name}";
+        }
+    }
+
+    private string GetJsonSchemaType(Type type)
+    {
+        if (type == typeof(string) || type == typeof(char))
+            return "string";
+        if (type == typeof(int) || type == typeof(long) || type == typeof(short) ||
+            type == typeof(byte) || type == typeof(uint) || type == typeof(ulong) || type == typeof(ushort))
+            return "integer";
+        if (type == typeof(float) || type == typeof(double) || type == typeof(decimal))
+            return "number";
+        if (type == typeof(bool))
+            return "boolean";
+        if (type.IsArray || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>)))
+            return "array";
+
+        return "string"; // Default fallback
+    }
+
+    private bool IsNullable(Type type)
+    {
+        return type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>) ||
+               !type.IsValueType;
+    }
+
 
     private async Task<string> CallFunctionAsync(AIFunction tool, string arguments, CancellationToken cancellationToken = default)
     {
         try
         {
-            // Parse arguments - simple comma-separated parsing
-            var argParts = arguments.Split(',').Select(s => s.Trim().Trim('"')).ToArray();
-
-            // Create AIFunctionArguments object
-            var functionArgs = new AIFunctionArguments();
-
-            // For the weather function, we expect location and optionally unit
-            if (tool.Name == "get_current_weather" && argParts.Length > 0)
-            {
-                functionArgs["location"] = argParts[0];
-                if (argParts.Length > 1)
-                    functionArgs["unit"] = argParts[1];
-                else
-                    functionArgs["unit"] = "celsius";
-            }
-
+            var functionArgs = ParseFunctionArguments(arguments, tool);
             var result = await tool.InvokeAsync(functionArgs, cancellationToken);
             return result?.ToString() ?? "Function executed successfully";
         }
         catch (Exception ex)
         {
             return $"Error executing function: {ex.Message}";
+        }
+    }
+
+    private AIFunctionArguments ParseFunctionArguments(string arguments, AIFunction function)
+    {
+        var functionArgs = new AIFunctionArguments();
+
+        try
+        {
+            // Try to parse as JSON first
+            if (arguments.Trim().StartsWith('{') && arguments.Trim().EndsWith('}'))
+            {
+                var jsonDoc = JsonDocument.Parse(arguments);
+
+                // Check if we have a generic "input" parameter that needs to be mapped
+                if (jsonDoc.RootElement.TryGetProperty("input", out var inputElement) &&
+                    jsonDoc.RootElement.EnumerateObject().Count() == 1)
+                {
+                    // We have a single "input" parameter - try to map it to the actual function parameters
+                    var inputValue = inputElement.GetString() ?? "";
+                    MapInputToActualParameters(functionArgs, function, inputValue);
+                }
+                else
+                {
+                    // Parse normally
+                    foreach (var property in jsonDoc.RootElement.EnumerateObject())
+                    {
+                        object? value = property.Value.ValueKind switch
+                        {
+                            JsonValueKind.String => property.Value.GetString(),
+                            JsonValueKind.Number => property.Value.GetDouble(),
+                            JsonValueKind.True => true,
+                            JsonValueKind.False => false,
+                            JsonValueKind.Null => null,
+                            _ => property.Value.ToString()
+                        };
+                        functionArgs[property.Name] = value;
+                    }
+                }
+
+                // Add default values for missing parameters based on method signature
+                AddDefaultValuesFromMethodSignature(functionArgs, function);
+            }
+            else
+            {
+                // Fallback to positional argument parsing
+                ParsePositionalArguments(arguments, function, functionArgs);
+            }
+        }
+        catch (JsonException)
+        {
+            // If JSON parsing fails, use positional approach
+            ParsePositionalArguments(arguments, function, functionArgs);
+        }
+
+        return functionArgs;
+    }
+
+    private void MapInputToActualParameters(AIFunctionArguments functionArgs, AIFunction function, string inputValue)
+    {
+        // Try to map the generic "input" to actual function parameters based on function name
+        switch (function.Name)
+        {
+            case "get_current_weather":
+                functionArgs["location"] = inputValue;
+                functionArgs["unit"] = "celsius"; // default value
+                break;
+
+            case "find_hiking_trails":
+                functionArgs["location"] = inputValue;
+                functionArgs["difficulty"] = "moderate"; // default value
+                break;
+
+            case "search_restaurants":
+                functionArgs["query"] = inputValue;
+                functionArgs["maxResults"] = 5; // default value
+                break;
+
+            default:
+                // For unknown functions, use the first parameter or "input"
+                var methodInfo = GetFunctionMethod(function);
+                if (methodInfo != null && methodInfo.GetParameters().Length > 0)
+                {
+                    var firstParam = methodInfo.GetParameters()[0];
+                    if (firstParam.Name != null)
+                    {
+                        functionArgs[firstParam.Name] = inputValue;
+                    }
+                }
+                else
+                {
+                    functionArgs["input"] = inputValue;
+                }
+                break;
+        }
+    }
+
+    private static void AddDefaultValuesFromMethodSignature(AIFunctionArguments functionArgs, AIFunction function)
+    {
+        var methodInfo = GetFunctionMethod(function);
+        if (methodInfo == null) return;
+
+        // Add default values for parameters that have defaults and are missing from arguments
+        foreach (var param in methodInfo.GetParameters())
+        {
+            var paramName = param.Name;
+            if (paramName != null && !functionArgs.ContainsKey(paramName) && param.HasDefaultValue)
+            {
+                functionArgs[paramName] = param.DefaultValue;
+            }
+        }
+    }
+
+    private static void ParsePositionalArguments(string arguments, AIFunction function, AIFunctionArguments functionArgs)
+    {
+        var argParts = arguments.Split(',').Select(s => s.Trim().Trim('"')).ToArray();
+        var methodInfo = GetFunctionMethod(function);
+
+        if (methodInfo != null)
+        {
+            // Map positional arguments to parameter names
+            var parameters = methodInfo.GetParameters();
+            for (int i = 0; i < Math.Min(argParts.Length, parameters.Length); i++)
+            {
+                var paramName = parameters[i].Name;
+                if (paramName != null)
+                {
+                    functionArgs[paramName] = ConvertArgumentToType(argParts[i], parameters[i].ParameterType);
+                }
+            }
+
+            // Add default values for remaining parameters
+            for (int i = argParts.Length; i < parameters.Length; i++)
+            {
+                var paramName = parameters[i].Name;
+                if (paramName != null && parameters[i].HasDefaultValue)
+                {
+                    functionArgs[paramName] = parameters[i].DefaultValue;
+                }
+            }
+        }
+        else
+        {
+            // Generic fallback: use positional argument names
+            for (int i = 0; i < argParts.Length; i++)
+            {
+                functionArgs[$"arg{i}"] = argParts[i];
+            }
+
+            // If only one argument and it's not named, use "input" as the key
+            if (argParts.Length == 1)
+            {
+                functionArgs["input"] = argParts[0];
+            }
+        }
+    }
+
+    private static object ConvertArgumentToType(string argument, Type targetType)
+    {
+        try
+        {
+            if (targetType == typeof(string))
+                return argument;
+            if (targetType == typeof(int))
+                return int.Parse(argument);
+            if (targetType == typeof(double))
+                return double.Parse(argument);
+            if (targetType == typeof(bool))
+                return bool.Parse(argument);
+            if (targetType.IsEnum)
+                return Enum.Parse(targetType, argument, ignoreCase: true);
+
+            // Default to string if conversion fails
+            return argument;
+        }
+        catch
+        {
+            return argument;
         }
     }
 
@@ -395,6 +779,12 @@ public class GigaChatRequest
 
     [JsonPropertyName("max_tokens")]
     public int MaxTokens { get; set; } = 1024;
+
+    [JsonPropertyName("functions")]
+    public GigaChatFunction[]? Functions { get; set; }
+
+    [JsonPropertyName("function_call")]
+    public object? FunctionCall { get; set; }
 }
 
 public class GigaChatMessage
@@ -404,6 +794,12 @@ public class GigaChatMessage
 
     [JsonPropertyName("content")]
     public string Content { get; set; } = "";
+
+    [JsonPropertyName("function_call")]
+    public GigaChatFunctionCall? FunctionCall { get; set; }
+
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 }
 
 public class GigaChatResponse
@@ -472,5 +868,33 @@ public class GigaChatStreamingUpdate : ChatResponseUpdate
             return value?.ToString() ?? "";
 
         return "";
+    }
+}
+
+public class GigaChatFunction
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
+
+    [JsonPropertyName("parameters")]
+    public Dictionary<string, object> Parameters { get; set; } = new();
+}
+
+public class GigaChatFunctionCall
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("arguments")]
+    public JsonElement Arguments { get; set; }
+
+    public string GetArgumentsAsString()
+    {
+        return Arguments.ValueKind == JsonValueKind.String
+            ? Arguments.GetString() ?? ""
+            : Arguments.ToString();
     }
 }
