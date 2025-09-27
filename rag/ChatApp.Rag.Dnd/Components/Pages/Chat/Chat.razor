@@ -1,0 +1,195 @@
+﻿@page "/"
+@using System.ComponentModel
+@using ChatApp.Rag.Services.DnD
+@inject IChatClient ChatClient
+@inject NavigationManager Nav
+@inject SemanticSearch Search
+@inject SimpleWorldManager WorldManager
+@implements IDisposable
+
+<PageTitle>D&D World Chat</PageTitle>
+
+<ChatHeader OnNewChat="@ResetConversationAsync" />
+
+<div class="dnd-controls mb-3">
+    <div class="row">
+        <div class="col-md-8">
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="playerMode" id="playerMode" value="player" checked="@(!isDmMode)" @onchange="() => isDmMode = false">
+                <label class="form-check-label" for="playerMode">Режим игрока</label>
+            </div>
+            <div class="form-check form-check-inline">
+                <input class="form-check-input" type="radio" name="playerMode" id="dmMode" value="dm" checked="@isDmMode" @onchange="() => isDmMode = true">
+                <label class="form-check-label" for="dmMode">Режим мастера</label>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <button class="btn btn-outline-info btn-sm" @onclick="ShowWorldDescriptionAsync">
+                📖 Описание мира
+            </button>
+        </div>
+    </div>
+</div>
+
+<ChatMessageList Messages="@messages" InProgressMessage="@currentResponseMessage">
+    <NoMessagesContent>
+        <div class="text-center">
+            <h4>🐉 Добро пожаловать в D&D чат! 🎲</h4>
+            <p>Начните играть, описывая действия вашего персонажа или создавая мир как мастер.</p>
+            <p><strong>Режим игрока:</strong> Описывайте действия, задавайте вопросы о мире</p>
+            <p><strong>Режим мастера:</strong> Описывайте локации, NPC, события для развития истории</p>
+            <small class="text-muted">Все сообщения автоматически сохраняются в векторную базу данных мира</small>
+        </div>
+    </NoMessagesContent>
+</ChatMessageList>
+
+<div class="chat-container">
+    <ChatSuggestions OnSelected="@AddUserMessageAsync" @ref="@chatSuggestions" />
+    <ChatInput OnSend="@AddUserMessageAsync" @ref="@chatInput" />
+    <SurveyPrompt /> @* Remove this line to eliminate the template survey message *@
+</div>
+
+@code {
+    private const string DefaultWorldId = "default-dnd-world";
+
+    private const string PlayerSystemPrompt = @"
+        Ты помощник игрока в D&D. Помогай понимать игровой мир, предлагай варианты действий,
+        консультируй по правилам. Не принимай решения за игрока, только консультируй.
+        Отвечай кратко и по существу. Используй контекст мира для последовательных ответов.
+        ";
+
+    private const string DmSystemPrompt = @"
+        Ты помощник Мастера в D&D. Помогай развивать сюжет, предлагай идеи для развития истории,
+        отслеживай детали мира. Используй контекст мира для создания связной истории.
+        Отвечай кратко и по существу.
+        ";
+
+    private readonly ChatOptions chatOptions = new();
+    private readonly List<ChatMessage> messages = new();
+    private CancellationTokenSource? currentResponseCancellation;
+    private ChatMessage? currentResponseMessage;
+    private ChatInput? chatInput;
+    private ChatSuggestions? chatSuggestions;
+    private bool isDmMode = false;
+
+    protected override void OnInitialized()
+    {
+        UpdateSystemPrompt();
+        chatOptions.Tools = [AIFunctionFactory.Create(SearchWorldAsync), AIFunctionFactory.Create(GetWorldDescriptionAsync)];
+    }
+
+    private void UpdateSystemPrompt()
+    {
+        var systemPrompt = isDmMode ? DmSystemPrompt : PlayerSystemPrompt;
+
+        if (messages.Any() && messages[0].Role == ChatRole.System)
+        {
+            messages[0] = new(ChatRole.System, systemPrompt);
+        }
+        else
+        {
+            messages.Insert(0, new(ChatRole.System, systemPrompt));
+        }
+    }
+
+    private async Task AddUserMessageAsync(ChatMessage userMessage)
+    {
+        CancelAnyCurrentResponse();
+
+        // Add the user message to the conversation
+        messages.Add(userMessage);
+        chatSuggestions?.Clear();
+        await chatInput!.FocusAsync();
+
+        // Process message for world building
+        var userMessageText = userMessage.Text ?? string.Empty;
+        var author = isDmMode ? "DM" : "Player";
+
+        // Store in world database and get AI response
+        try
+        {
+            var worldResponse = await WorldManager.ProcessGameMessageAsync(DefaultWorldId, userMessageText, author, isDmMode);
+
+            // Stream and display a new response from the IChatClient
+            var responseText = new TextContent("");
+            currentResponseMessage = new ChatMessage(ChatRole.Assistant, [responseText]);
+            currentResponseCancellation = new();
+
+            // For now, show the world response directly
+            responseText.Text = worldResponse;
+            ChatMessageItem.NotifyChanged(currentResponseMessage);
+
+            await Task.Delay(100); // Small delay to simulate streaming
+
+            // Store the final response in the conversation
+            messages.Add(currentResponseMessage!);
+            currentResponseMessage = null;
+            chatSuggestions?.Update(messages);
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = new ChatMessage(ChatRole.Assistant, $"Ошибка при обработке сообщения: {ex.Message}");
+            messages.Add(errorMessage);
+        }
+    }
+
+    private void CancelAnyCurrentResponse()
+    {
+        // If a response was cancelled while streaming, include it in the conversation so it's not lost
+        if (currentResponseMessage is not null)
+        {
+            messages.Add(currentResponseMessage);
+        }
+
+        currentResponseCancellation?.Cancel();
+        currentResponseMessage = null;
+    }
+
+    private async Task ResetConversationAsync()
+    {
+        CancelAnyCurrentResponse();
+        messages.Clear();
+        UpdateSystemPrompt();
+        chatOptions.ConversationId = null;
+        chatSuggestions?.Clear();
+        await chatInput!.FocusAsync();
+    }
+
+    private async Task ShowWorldDescriptionAsync()
+    {
+        try
+        {
+            var worldDescription = await WorldManager.GetWorldDescriptionAsync(DefaultWorldId);
+
+            var worldMessage = new ChatMessage(ChatRole.Assistant, $"📖 **Описание мира:**\n\n{worldDescription}");
+            messages.Add(worldMessage);
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            var errorMessage = new ChatMessage(ChatRole.Assistant, $"Ошибка при получении описания мира: {ex.Message}");
+            messages.Add(errorMessage);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    [Description("Searches for world information using a phrase or keyword")]
+    private async Task<IEnumerable<string>> SearchWorldAsync(
+        [Description("The phrase to search for in the world.")] string searchPhrase)
+    {
+        await InvokeAsync(StateHasChanged);
+        var results = await WorldManager.SearchWorldElementsAsync(DefaultWorldId, searchPhrase, maxResults: 5);
+        return results.Select(result => $"<world_element>{result}</world_element>");
+    }
+
+    [Description("Gets the complete description of the world")]
+    private async Task<string> GetWorldDescriptionAsync()
+    {
+        await InvokeAsync(StateHasChanged);
+        return await WorldManager.GetWorldDescriptionAsync(DefaultWorldId);
+    }
+
+    public void Dispose()
+        => currentResponseCancellation?.Cancel();
+}
